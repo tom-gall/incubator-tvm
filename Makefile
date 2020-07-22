@@ -86,6 +86,7 @@ pylint:
 	python3 -m pylint python/tvm --rcfile=$(ROOTDIR)/tests/lint/pylintrc
 	python3 -m pylint topi/python/topi --rcfile=$(ROOTDIR)/tests/lint/pylintrc
 	python3 -m pylint vta/python/vta --rcfile=$(ROOTDIR)/tests/lint/pylintrc
+	python3 -m pylint tvmc/tvmc --rcfile=$(ROOTDIR)/tests/lint/pylintrc
 
 jnilint:
 	python3 3rdparty/dmlc-core/scripts/lint.py tvm4j-jni cpp jvm/native/src
