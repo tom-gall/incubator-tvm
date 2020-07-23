@@ -1,4 +1,4 @@
-import contextlib
+ import contextlib
 import copy
 import glob
 import os
@@ -58,6 +58,52 @@ def test_compile_runtime():
       system_lib.get_function('add')(A_data, B_data, C_data)
       print('got data!', C_data.asnumpy())
       assert (C_data.asnumpy() == numpy.array([6, 7])).all()
+
+
+def test_autotvm(sess):
+  model = tvm.relay.from_text(textutil.dedent("""\
+      v0.0.4
+      def @main(data: Tensor[(1, 32, 32, 3), "int8"], weight: Tensor[(5, 5, 3, 3),
+      nn.conv2d(
+      %data,
+      %weight,
+      padding=[2, 2],
+      channels=3,
+      kernel_size=[5, 5],
+      data_layout="NHWC",
+      kernel_layout="HWOI",
+      out_dtype="int32")"")
+  """))
+
+  with tvm.transform.PassContext(opt_level=3, config={'tir.disable_vectorize': True}):
+    tasks = tvm.autotvm.task.extract_from_program(
+      compiled_model.ir_mod[compiled_model.entry_point],
+      compiled_model.params,
+      self.target)
+
+  assert len(tasks) == 1
+  tuner = tvm.autotvm.tuner.GATuner(task)
+
+  builder = tvm.autotvm.LocalBuilder(
+      build_func=tvm.micro.cross_compiler(
+          dev_config,
+          tvm.micro.LibType.OPERATOR,
+          lib_headers=HEADERS,
+          lib_include_paths=INCLUDE_PATHS),
+      n_parallel=num_runners)
+  builder.build_kwargs.setdefault('build_option', {})['disable_vectorize'] = True
+  runner = tvm.autotvm.RPCRunner(
+      tracker_key, tracker_host, tracker_port, n_parallel=num_runners,
+      number=1, repeat=1, timeout=0)
+
+  measure_option = tvm.autotvm.measure_option(builder=builder, runner=runner)
+  n_trial = min(args.num_iterations, len(task.config_space))
+  tuner.tune(n_trial=2,
+             measure_option=measure_option,
+             callbacks=[]
+             si_prefix='k')
+
+
 
 
 if __name__ == '__main__':

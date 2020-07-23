@@ -159,3 +159,54 @@ def build_static_runtime(workspace, compiler, module, lib_opts=None, bin_opts=No
   runtime_build_dir = workspace.relpath(f'build/runtime')
   os.makedirs(runtime_build_dir)
   return compiler.Binary(runtime_build_dir, libs, bin_opts)
+
+
+class AutoTvmAdapter:
+
+  def __init__(self, workspace, compiler, flasher, lib_opts=None, bin_opts=None):
+    self.workspace = workspace
+    self.compiler = compiler
+    self.flasher = flasher
+    self.lib_opts = lib_opts if lib_opts is not None else _CRT_DEFAULT_OPTIONS
+    self.bin_opts = bin_opts if bin_opts is not None else _CRT_DEFAULT_OPTIONS
+
+    self.libs = []
+    self.module_number = 0
+
+    for lib_src_dir in RUNTIME_LIB_SRC_DIRS:
+      lib_name = os.path.basename(lib_src_dir)
+      lib_build_dir = self.workspace.relpath(f'build/{lib_name}')
+      os.makedirs(lib_build_dir)
+
+      lib_srcs = []
+      for p in os.listdir(lib_src_dir):
+        if RUNTIME_SRC_REGEX.match(p):
+          lib_srcs.append(os.path.join(lib_src_dir, p))
+
+      self.libs.append(self.compiler.Library(lib_build_dir, lib_srcs, lib_opts))
+
+  def CodeLoader(self, remote, build_result):
+    remote.upload(build_result.filename)
+    remote_filename = os.path.basename(build_result.filename)
+    create_micro_session = remote.get_function('tvm.micro.create_micro_session')
+    create_micro_session(build_result.filename,)
+
+  def StaticRuntime(self, target, sources, options=None):
+    _generate_mod_wrapper(mod_src_path)
+
+    mod_build_dir = workspace.relpath(os.path.join('build', 'module'))
+    os.makedirs(mod_build_dir)
+
+    lib_opts = self.lib_opts
+    if options is not None:
+      lib_opts = dict(lib_opts)
+      lib_opts.setdefault('cflags').extend(options)
+
+    libs.append(compiler.Library(mod_build_dir, sources, lib_opts))
+    runtime_build_dir = workspace.relpath(f'build/runtime-{self.module_number}')
+    os.makedirs(runtime_build_dir)
+
+    binary = self.compiler.Binary(runtime_build_dir, self.libs, self.bin_opts)
+    binary.archive(target)
+
+  def Run(self,):

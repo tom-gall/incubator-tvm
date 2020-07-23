@@ -75,3 +75,49 @@ class Session:
     def __exit__(self, exc_type, exc_value, exc_traceback):
         """Tear down this session and associated RPC session resources."""
         self.transport.__exit__(exc_type, exc_value, exc_traceback)
+
+
+RPC_SESSION_CONFIG = None
+
+
+def load_rpc_session_config(file_name):
+    global RPC_SESSION_CONFIG
+    with open(file_name) as json_f:
+        RPC_SESSION_CONFIG = json.load(json_f)
+
+
+RPC_SESSION = None
+
+
+@register_func
+def create_micro_session(micro_binary_path, flasher_class, flasher_args, flasher_kw):
+    global RPC_SESSION
+    if RPC_SESSION is not None:
+        raise Exception('Micro session already established')
+
+    if RPC_SESSION_CONFIG is None:
+        raise Exception('No RPC_SESSION_CONFIG loaded')
+
+    binary = micro_binary.MicroBinary.unarchive(
+        build_result.filename, tempfile.mkdtemp(dir=self.workspace.relpath('binary')))
+    flasher_package_name, flasher_class_name = RPC_SESSION_CONFIG['flasher_class']
+    flasher_package = importlib.import_module(flasher_package_name)
+    flasher_class = getattr(flasher_package, flasher_class_name)
+    assert issubclass(flasher_class, Flasher), (
+        f'flasher_class_path must specify a subclass of Flasher, got {flasher_class_path}')
+
+    RPC_SESSION = session.Session(binary=binary, flasher=self.flasher)
+    RPC_SESSION.__enter__()
+    return RPC_SESSION
+
+
+@register_func
+def destroy_micro_session():
+    global RPC_SESSION
+    if RPC_SESSION is not None:
+        exc_type, exc_value, traceback = RPC_SESSION.__exit__(None, None, None)
+        RPC_SESSION = None
+        if (exc_type, exc_value, traceback) != (None, None, None):
+            e = exc_type(exc_value)  # See PEP 3109
+            e.__traceback__ = traceback
+            raise e

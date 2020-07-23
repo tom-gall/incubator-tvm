@@ -22,6 +22,7 @@ These functions are responsible for building the tvm module, uploading it to
 remote devices, recording the running time costs, and checking the correctness of the output.
 """
 
+import contextlib
 import logging
 import shutil
 import os
@@ -185,7 +186,7 @@ class RPCRunner(Runner):
                  key, host, port, priority=1,
                  timeout=10, n_parallel=None,
                  number=4, repeat=3, min_repeat_ms=0, cooldown_interval=0.1,
-                 check_correctness=False):
+                 check_correctness=False, code_loader=None):
         super(RPCRunner, self).__init__(timeout, n_parallel)
 
         self.key = key
@@ -202,6 +203,7 @@ class RPCRunner(Runner):
         self.ref_output = None
         self.check_correctness = check_correctness
         self.cooldown_interval = cooldown_interval
+        self.code_loader = code_loader
 
         self.executor = LocalExecutor()
 
@@ -267,7 +269,8 @@ class RPCRunner(Runner):
                                            self.cooldown_interval,
                                            remote_args,
                                            self.ref_input,
-                                           self.ref_output)
+                                           self.ref_output,
+                                           self.code_loader)
                 futures.append(ret)
 
             for future in futures:
@@ -419,9 +422,31 @@ def _wrap_build_func(build_func):
     return _wrapped
 
 
+@contextlib.contextmanager
+def default_code_loader(remote, build_result):
+    # Program the FPGA every single time when targeting VTA
+    if hasattr(measure_input.target, 'device_name') and \
+       measure_input.target.device_name == 'vta':
+        # pylint: disable=import-outside-toplevel
+        from vta import program_fpga, reconfig_runtime
+        program_fpga(remote, None)
+        reconfig_runtime(remote)
+    remote.upload(build_result.filename)
+    try:
+        yield remote, remote.load_module(os.path.split(build_result.filename)[1])
+
+    finally:
+        # clean up remote files
+        remote.remove(build_result.filename)
+        remote.remove(os.path.splitext(build_result.filename)[0] + '.so')
+        remote.remove('')
+
+
+
 def run_through_rpc(measure_input, build_result,
                     number, repeat, min_repeat_ms, cooldown_interval,
-                    remote_args, ref_input=None, ref_output=None):
+                    remote_args, ref_input=None, ref_output=None,
+                    code_loader=None):
     """Run a generated library through rpc
 
     Parameters
@@ -463,35 +488,22 @@ def run_through_rpc(measure_input, build_result,
     try:
         # upload built module
         remote = request_remote(*remote_args)
-        # Program the FPGA every single time when targeting VTA
-        if hasattr(measure_input.target, 'device_name') and \
-            measure_input.target.device_name == 'vta':
-            # pylint: disable=import-outside-toplevel
-            from vta import program_fpga, reconfig_runtime
-            program_fpga(remote, None)
-            reconfig_runtime(remote)
-        remote.upload(build_result.filename)
-        func = remote.load_module(os.path.split(build_result.filename)[1])
-        ctx = remote.context(str(measure_input.target), 0)
-        time_f = func.time_evaluator(
-            func.entry_name, ctx, number=number, repeat=repeat, min_repeat_ms=min_repeat_ms)
+        with code_loader(remote, build_result) as remote, mod:
+            ctx = remote.context(str(measure_input.target), 0)
+            time_f = mod.time_evaluator(
+                func.entry_name, ctx, number=number, repeat=repeat, min_repeat_ms=min_repeat_ms)
 
-        # set input
-        if ref_input:
-            args = [nd.array(x, ctx=ctx) for x in ref_input]
-        else:
-            # create empty arrays on the remote device and copy them once.
-            # This can avoid some memory issues that make the measurement results unreliable.
-            args = [nd.empty(x[0], dtype=x[1], ctx=ctx) for x in build_result.arg_info]
-            args = [nd.array(x, ctx=ctx) for x in args]
-            ctx.sync()
+            # set input
+            if ref_input:
+                args = [nd.array(x, ctx=ctx) for x in ref_input]
+            else:
+                # create empty arrays on the remote device and copy them once.
+                # This can avoid some memory issues that make the measurement results unreliable.
+                args = [nd.empty(x[0], dtype=x[1], ctx=ctx) for x in build_result.arg_info]
+                args = [nd.array(x, ctx=ctx) for x in args]
+                ctx.sync()
 
-        costs = time_f(*args).results
-
-        # clean up remote files
-        remote.remove(build_result.filename)
-        remote.remove(os.path.splitext(build_result.filename)[0] + '.so')
-        remote.remove('')
+            costs = time_f(*args).results
 
         if len(costs) > 2:  # remove largest and smallest value to reduce variance
             costs = list(costs)
