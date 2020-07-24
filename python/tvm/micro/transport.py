@@ -48,7 +48,7 @@ class Transport(metaclass=abc.ABCMeta):
 
 class TransportLogger(Transport):
 
-  def __init__(self, name, child, logger=None, level=logging.DEBUG):
+  def __init__(self, name, child, logger=None, level=logging.INFO):
     self.name = name
     self.child = child
     self.logger = logger or _LOG
@@ -111,7 +111,6 @@ class SerialTransport(Transport):
 
     @classmethod
     def close_atexit(cls):
-        print('*** CLOSING PORTS!')
         for port in cls._OPEN_PORTS:
             try:
                 port.close()
@@ -139,11 +138,12 @@ class SerialTransport(Transport):
 
             port_path = ports[0].device
 
-        self._port = serial.Serial(port_path, timeout=0.1, **self._kw)
+        self._port = serial.Serial(port_path, timeout=0.1, exclusive=True, **self._kw)
         self._port.cancel_read()
         self._port.reset_input_buffer()
         self._port.reset_output_buffer()
         self._OPEN_PORTS.append(self._port)
+#        self._port.read()
 #        import time
 #        time.sleep(1.1)
 
@@ -168,7 +168,6 @@ class SerialTransport(Transport):
 
     def write(self, data):
         # NOTE(areusch): Due to suspected flaky ST-Link VCP OS X driver, write 1 byte at a time.
-        print('write write', len(data))
         total_written = 0
         while len(data) > 0:
           num = self._port.write(data[:1])

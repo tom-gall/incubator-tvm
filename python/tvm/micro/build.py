@@ -62,7 +62,7 @@ def _generate_mod_wrapper(src_path):
       '};',
       '',
       'const TVMModule* TVMSystemLibEntryPoint(void) {',
-      '    fprintf(stderr, "create system lib!! %p\\n", system_lib.registry->funcs[0]);',
+#      '    fprintf(stderr, "create system lib!! %p\\n", system_lib.registry->funcs[0]);',
       '    return &system_lib;',
       '}',
       '',   # blank line to end the file

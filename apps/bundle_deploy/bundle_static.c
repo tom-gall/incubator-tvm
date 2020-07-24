@@ -17,9 +17,11 @@
  * under the License.
  */
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <tvm/runtime/crt/crt.h>
+#include <tvm/runtime/crt/memory.h>
 #include <tvm/runtime/crt/graph_runtime.h>
 #include <tvm/runtime/crt/packed_func.h>
 
@@ -35,6 +37,9 @@
     }                                                                                \
   } while (0)
 
+#define TVM_CRT_MEMORY_SIZE_BYTES (TVM_CRT_MAX_PAGES << TVM_CRT_PAGE_BYTES_LOG)
+uint8_t memory_pool[TVM_CRT_MEMORY_SIZE_BYTES];
+
 TVM_DLL void* tvm_runtime_create(const char* json_data, const char* params_data,
                                  const uint64_t params_size) {
   int64_t device_type = kDLCPU;
@@ -49,6 +54,7 @@ TVM_DLL void* tvm_runtime_create(const char* json_data, const char* params_data,
   ctx.device_id = device_id;
 
   // get pointers
+  TVMInitializeGlobalMemoryManager(memory_pool, TVM_CRT_MEMORY_SIZE_BYTES, TVM_CRT_PAGE_BYTES_LOG);
   TVM_CCALL(TVMInitializeRuntime());
   TVMPackedFunc pf;
   TVMArgs args = TVMArgs_Create(NULL, NULL, 0);
@@ -87,4 +93,13 @@ TVM_DLL void tvm_runtime_get_output(void* runtime, int32_t index, DLTensor* tens
 void __attribute__((noreturn)) TVMPlatformAbort(int error_code) {
   fprintf(stderr, "TVMPlatformAbort: %d\n", error_code);
   exit(-1);
+}
+
+void TVMLogf(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  fprintf(stderr, "tvm: ");
+  vfprintf(stderr, fmt, args);
+  fprintf(stderr, "\n");
+  va_end(args);
 }

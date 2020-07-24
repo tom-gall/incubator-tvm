@@ -57,6 +57,7 @@ int Unframer::Write(const uint8_t* data, size_t data_size_bytes, size_t* bytes_c
   input_size_bytes_ = data_size_bytes;
 
   while (return_code == 0 && input_size_bytes_ > 0) {
+    TVM_FRAMER_DEBUG_LOG("state: %02x size %02lx", to_integral(state_), input_size_bytes_);
     switch (state_) {
     case State::kFindPacketStart:
       return_code = FindPacketStart();
@@ -79,6 +80,11 @@ int Unframer::Write(const uint8_t* data, size_t data_size_bytes, size_t* bytes_c
   *bytes_consumed = data_size_bytes - input_size_bytes_;
   input_ = nullptr;
   input_size_bytes_ = 0;
+
+  if (return_code == -1) {
+    state_ = State::kFindPacketStart;
+    ClearBuffer();
+  }
 
   return return_code;
 }
@@ -120,7 +126,7 @@ int Unframer::ConsumeInput(uint8_t* buffer, size_t buffer_size_bytes, size_t* by
         uint8_t escape_start = to_integral(Escape::kEscapeStart);
         crc_ = crc16_compute(&escape_start, 1, NULL);
         to_return = -1;
-        i++;
+        saw_escape_start_ = true;
 
         break;
       } else if (c == to_integral(Escape::kEscapeNop)) {
@@ -180,6 +186,7 @@ int Unframer::FindPacketLength() {
 
   // TODO endian
   num_payload_bytes_remaining_ = *((uint32_t*) buffer_);
+  TVM_FRAMER_DEBUG_LOG("packet length: %08zu", num_payload_bytes_remaining_);
   ClearBuffer();
   state_ = State::kFindPacketCrc;
   return 0;
@@ -187,8 +194,8 @@ int Unframer::FindPacketLength() {
 
 
 int Unframer::FindPacketCrc() {
-  CHECK(num_buffer_bytes_valid_ == 0);
-
+//  CHECK(num_buffer_bytes_valid_ == 0);
+  TVM_FRAMER_DEBUG_LOG("find packet crc: %02zu", num_payload_bytes_remaining_);
   while (num_payload_bytes_remaining_ > 0) {
     size_t num_bytes_to_buffer = num_payload_bytes_remaining_;
     if (num_bytes_to_buffer > sizeof(buffer_)) {
@@ -363,6 +370,7 @@ int Framer::FinishPacket() {
   int to_return = WriteAndCrc(
     reinterpret_cast<uint8_t*>(&crc_), sizeof(crc_), true  /* escape */, false  /* update_crc */);
   if (to_return != 0) {
+    TVM_FRAMER_DEBUG_LOG("write and crc returned: %02x", to_return);
     state_ = State::kReset;
   } else {
     state_ = State::kIdle;

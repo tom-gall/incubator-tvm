@@ -24,6 +24,9 @@
 #ifndef TVM_RUNTIME_CRT_CONFIG_H_
 #define TVM_RUNTIME_CRT_CONFIG_H_
 
+/*! Log level of the CRT runtime */
+#define TVM_CRT_LOG_LEVEL TVM_CRT_LOG_LEVEL_DEBUG
+
 /*! Support low-level debugging in MISRA-C runtime */
 #define TVM_CRT_DEBUG 0
 
@@ -35,6 +38,8 @@
 #define TVM_CRT_MAX_DLTYPE_STRLEN 10
 /*! Maximum supported string length in function names */
 #define TVM_CRT_MAX_FUNCTION_NAME_STRLEN 80
+/*! Maximum supported string length in function names */
+#define TVM_CRT_STRLEN_NAME 80
 
 /*!
  * \brief Log memory pool size for virtual memory allocation
@@ -74,5 +79,8 @@
 
 /*! Size of the global function registry, in bytes. */
 #define TVM_CRT_GLOBAL_FUNC_REGISTRY_SIZE_BYTES 200
+
+/*! \brief DLDataType for the return value from strlen */
+#define TVM_CRT_STRLEN_DLTYPE 10
 
 #endif  // TVM_RUNTIME_CRT_CONFIG_H_
