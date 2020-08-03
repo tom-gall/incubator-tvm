@@ -37,6 +37,24 @@ extern "C" {
  */
 void __attribute__((noreturn)) TVMPlatformAbort(int code);
 
+/*! \brief Start a device timer.
+ *
+ * The device timer used must not be running.
+ *
+ * \return An error code.
+ */
+int TVMPlatformTimerStart();
+
+/*! \brief Stop the running device timer and get the elapsed time (in microseconds).
+ *
+ * The device timer used must be running.
+ *
+ * \param res_us Pointer to write elapsed time into.
+ *
+ * \return An error code.
+ */
+int TVMPlatformTimerStop(double* res_us);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

@@ -178,6 +178,7 @@ class MicroRPCServer {
 }  // namespace runtime
 }  // namespace tvm
 
+// TODO having this def causes a compiler error on Kraken, but not on the VM
 void* operator new[](size_t count, void* ptr) noexcept { return ptr; }
 
 extern "C" {

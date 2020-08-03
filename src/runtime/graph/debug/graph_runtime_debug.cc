@@ -58,7 +58,7 @@ class GraphRuntimeDebug : public GraphRuntime {
   std::string RunIndividual(int number, int repeat, int min_repeat_ms) {
     // warmup run
     GraphRuntime::Run();
-    std::ostringstream os;
+    std::string tkey = module_->type_key();
     std::vector<double> time_per_op(op_execs_.size(), 0);
     for (int i = 0; i < repeat; ++i) {
       std::chrono::time_point<std::chrono::high_resolution_clock, std::chrono::nanoseconds> tbegin,
@@ -74,15 +74,11 @@ class GraphRuntimeDebug : public GraphRuntime {
         for (int k = 0; k < number; k++) {
           for (size_t index = 0; index < op_execs_.size(); ++index) {
             if (op_execs_[index]) {
-              const TVMContext& ctx = data_entry_[entry_id(index, 0)]->ctx;
-              auto op_tbegin = std::chrono::high_resolution_clock::now();
-              op_execs_[index]();
-              TVMSynchronize(ctx.device_type, ctx.device_id, nullptr);
-              auto op_tend = std::chrono::high_resolution_clock::now();
-              double op_duration =
-                  std::chrono::duration_cast<std::chrono::duration<double> >(op_tend - op_tbegin)
-                      .count();
-              time_per_op[index] += op_duration * 1e6;  // us
+              if (tkey == "rpc") {
+                time_per_op[index] += RunOpRPC(index);
+              } else {
+                time_per_op[index] += RunOpHost(index);
+              }
             }
           }
         }
@@ -102,10 +98,74 @@ class GraphRuntimeDebug : public GraphRuntime {
         }
       }
     }
+
+    std::ostringstream os;
     for (size_t index = 0; index < time_per_op.size(); index++) {
       os << time_per_op[index] << ",";
     }
     return os.str();
+  }
+
+  double RunOpRPC(int index) {
+    const TVMContext& ctx = data_entry_[entry_id(index, 0)]->ctx;
+    TVMOpParam param = nodes_[index].param;
+    std::string name = param.func_name;
+    uint32_t num_inputs = param.num_inputs;
+    uint32_t num_outputs = param.num_outputs;
+
+    int num_flat_args = 7 + num_inputs + num_outputs;
+    TVMValue values[num_flat_args];
+    int type_codes[num_flat_args];
+    TVMArgsSetter setter(values, type_codes);
+    int offs = 0;
+    setter(offs, module_);
+    offs++;
+    setter(offs, name);
+    offs++;
+    setter(offs, static_cast<int>(ctx.device_type));
+    offs++;
+    setter(offs, ctx.device_id);
+    offs++;
+    setter(offs, 1);
+    offs++;
+    setter(offs, 1);
+    offs++;
+    setter(offs, 0);
+    offs++;
+
+    const auto& inode = nodes_[index];
+    for (const auto& e : inode.inputs) {
+      uint32_t eid = this->entry_id(e);
+      DLTensor* arg = const_cast<DLTensor*>(data_entry_[eid].operator->());
+      setter(offs, arg);
+      offs++;
+    }
+    for (uint32_t i = 0; i < num_outputs; ++i) {
+      uint32_t eid = this->entry_id(index, i);
+      DLTensor* arg = const_cast<DLTensor*>(data_entry_[eid].operator->());
+      setter(offs, arg);
+      offs++;
+    }
+    auto* time_eval = runtime::Registry::Get("runtime.RPCTimeEvaluator");
+    TVMRetValue rv;
+    time_eval->CallPacked(TVMArgs(values, type_codes, num_flat_args), &rv);
+    TVMSynchronize(ctx.device_type, ctx.device_id, nullptr);
+
+    std::string results = rv.operator std::string();
+    double* results_arr = (double*) results.data();
+    return results_arr[0] * 1e3;
+  }
+
+  double RunOpHost(int index) {
+    auto op_tbegin = std::chrono::high_resolution_clock::now();
+    op_execs_[index]();
+    const TVMContext& ctx = data_entry_[entry_id(index, 0)]->ctx;
+    TVMSynchronize(ctx.device_type, ctx.device_id, nullptr);
+    auto op_tend = std::chrono::high_resolution_clock::now();
+    double op_duration =
+        std::chrono::duration_cast<std::chrono::duration<double> >(op_tend - op_tbegin)
+            .count();
+    return op_duration * 1e6;  // us
   }
 
   /*!

@@ -91,8 +91,10 @@ class Compiler(metaclass=abc.ABCMeta):
         Default options used the configure the compiler for that target.
     """
     opts = []
+    # TODO use march for arm(https://gcc.gnu.org/onlinedocs/gcc/ARM-Options.html)?
     if target.attrs.get('mcpu'):
-      opts.append(f'-mcpu={target.attrs["mcpu"]}')
+      # opts.append(f'-mcpu={target.attrs["mcpu"]}')
+      opts.append(f'-march={target.attrs["mcpu"]}')
     if target.attrs.get('mfpu'):
       opts.append(f'-mfpu={target.attrs["mfpu"]}')
 
@@ -263,6 +265,9 @@ class DefaultCompiler(Compiler):
       else:
         args.extend(host_main_srcs)
 
+    # for obj in objects:
+    #   for lib_name in obj.library_files:
+    #     args.append(obj.abspath(lib_name))
     for obj in objects:
       for lib_name in obj.library_files:
         args.append(obj.abspath(lib_name))

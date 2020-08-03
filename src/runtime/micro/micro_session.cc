@@ -97,6 +97,7 @@ class MicroTransportChannel : public RPCChannel {
 
       std::string chunk = frecv_(128);
       pending_chunk_ = chunk;
+      CHECK(pending_chunk_.size() != 0) << "zero-size chunk encountered";
       LOG(INFO) << "receive " << pending_chunk_.size();
       CHECK(pending_chunk_.size() > 0);
     }
@@ -111,7 +112,7 @@ class MicroTransportChannel : public RPCChannel {
 
   size_t Send(const void* data, size_t size) override {
     const uint8_t* data_bytes = static_cast<const uint8_t*>(data);
-    std::cout << "send " << size << " bytes" << std::endl;
+    LOG(INFO) << "send " << size << " bytes" << std::endl;
     ssize_t ret = session_.SendMessage(MessageType::kNormalTraffic, data_bytes, size);
     CHECK(ret == 0) << "SendMessage returned " << ret;
 

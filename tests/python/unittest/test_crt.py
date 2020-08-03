@@ -15,8 +15,7 @@ from tvm.contrib import util
 
 DEBUG = False
 
-def test_compile_runtime():
-  """Test compiling the on-device runtime."""
+def _setup(test_func):
   target = tvm.target.create('c -mcpu=x86-64')
 
   A = tvm.te.placeholder((2,), dtype='int8')
@@ -44,22 +43,54 @@ def test_compile_runtime():
 #    'use_tracker': False,
 #  })
 
-  with contextlib.ExitStack() as exit_stack:
-    flasher_kw = {
-      'debug': DEBUG,
-    }
+  # with contextlib.ExitStack() as exit_stack:
+  flasher_kw = {
+    'debug': DEBUG,
+  }
 
-    flasher = compiler.Flasher(**flasher_kw)
-    with tvm.micro.Session(binary=micro_binary, flasher=flasher) as sess:
-      A_data = tvm.nd.array(numpy.array([2, 3], dtype='int8'), ctx=sess.context)
-      B_data = tvm.nd.array(numpy.array([4], dtype='int8'), ctx=sess.context)
-      C_data = tvm.nd.array(numpy.array([0, 0], dtype='int8'), ctx=sess.context)
+  flasher = compiler.Flasher(**flasher_kw)
+  with tvm.micro.Session(binary=micro_binary, flasher=flasher) as sess:
+    test_func(sess)
 
-      system_lib = sess._rpc.system_lib()
-      print('got system lib', system_lib)
-      system_lib.get_function('add')(A_data, B_data, C_data)
-      print('got data!', C_data.asnumpy())
-      assert (C_data.asnumpy() == numpy.array([6, 7])).all()
+
+def test_compile_runtime(sess):
+  """Test compiling the on-device runtime."""
+  A_data = tvm.nd.array(numpy.array([2, 3], dtype='int8'), ctx=sess.context)
+  B_data = tvm.nd.array(numpy.array([4], dtype='int8'), ctx=sess.context)
+  C_data = tvm.nd.array(numpy.array([0, 0], dtype='int8'), ctx=sess.context)
+
+  system_lib = sess.get_system_lib()
+  print('got system lib', system_lib)
+  system_lib.get_function('add')(A_data, B_data, C_data)
+  system_lib.get_function('add')
+  print('got data!', C_data.asnumpy())
+  assert (C_data.asnumpy() == numpy.array([6, 7])).all()
+
+
+def test_time_evaluator(sess):
+  A_data = tvm.nd.array(numpy.array([2, 3], dtype='int8'), ctx=sess.context)
+  B_data = tvm.nd.array(numpy.array([4], dtype='int8'), ctx=sess.context)
+  C_data = tvm.nd.array(numpy.array([0, 0], dtype='int8'), ctx=sess.context)
+  number = 10000
+  repeat = 5
+  min_repeat_ms = 100
+
+  system_lib = sess.get_system_lib()
+  timer_func = system_lib.time_evaluator(
+    'add', sess.context,
+    number=number, repeat=repeat, min_repeat_ms=min_repeat_ms)
+  time_res = timer_func(A_data, B_data, C_data)
+  assert len(time_res.results) == repeat
+  assert time_res.mean > 0.0
+  assert (C_data.asnumpy() == numpy.array([6, 7])).all()
+
+  # run the time evaluator many times to ensure we don't leak memory (we
+  # allocate a byte array each time to store the doubles)
+  timer_func = system_lib.time_evaluator(
+    'add', sess.context,
+    number=1, repeat=5)
+  for i in range(50):
+    print(timer_func(A_data, B_data, C_data))
 
 
 def test_autotvm():
@@ -112,7 +143,8 @@ def test_autotvm():
 
 
 if __name__ == '__main__':
-  test_compile_runtime()
+  _setup(test_compile_runtime)
+  _setup(test_time_evaluator)
   import logging
   logging.basicConfig(level=logging.DEBUG)
   test_autotvm()

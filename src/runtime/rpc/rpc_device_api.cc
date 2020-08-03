@@ -62,6 +62,8 @@ class RPCDeviceAPI final : public DeviceAPI {
       GetSess(ctx)->GetDeviceAPI(remote_ctx)->FreeDataSpace(remote_ctx, space->data);
     } catch (const dmlc::Error& e) {
       // fault tolerance to remote close.
+      // TODO handle micro session closes more gracefully (we currently hide the errors in here)
+      // std::cout << "FreeDataSpace crashed with err:\n" << e.what() << std::endl;
     }
     delete space;
   }

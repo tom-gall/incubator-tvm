@@ -145,7 +145,7 @@ def test_autotvm():
   lib_opts['profile']['common'].append('-Werror')
   lib_opts['cflags'] = ['-Wno-error=incompatible-pointer-types']
 
-  adapter = tvm.micro.AutoTvmAdapter(workspace, compiler, compiler.flasher_factory.override_kw(nrfjprog_snr='960153435'),
+  adapter = tvm.micro.AutoTvmAdapter(workspace, compiler, compiler.flasher_factory.override_kw(nrfjprog_snr='960100695'),
                                      lib_opts=lib_opts, bin_opts=bin_opts)
 
   builder = tvm.autotvm.LocalBuilder(

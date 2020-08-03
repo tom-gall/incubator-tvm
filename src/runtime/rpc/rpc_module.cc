@@ -185,21 +185,38 @@ class RPCModuleNode final : public ModuleNode {
   PackedFunc GetTimeEvaluator(const std::string& name, TVMContext ctx, int number, int repeat,
                               int min_repeat_ms) {
     InitRemoteFunc(&remote_get_time_evaluator_, "runtime.RPCTimeEvaluator");
-    // Remove session mask because we pass ctx by parts.
-    int dev_type = ctx.device_type;
-    CHECK_EQ(dev_type / kRPCSessMask, sess_->table_index() + 1)
-        << "ValueError: Need to pass the matched remote context to RPCModule.GetTimeEvaluator";
-    ctx.device_type = static_cast<DLDeviceType>(ctx.device_type % kRPCSessMask);
 
-    if (module_handle_ != nullptr) {
-      return remote_get_time_evaluator_(GetRef<Module>(this), name,
-                                        static_cast<int>(ctx.device_type), ctx.device_id, number,
-                                        repeat, min_repeat_ms);
-    } else {
-      return remote_get_time_evaluator_(Optional<Module>(nullptr), name,
-                                        static_cast<int>(ctx.device_type), ctx.device_id, number,
-                                        repeat, min_repeat_ms);
-    }
+    Optional<Module> opt_mod =
+      (module_handle_ == nullptr)
+        ? Optional<Module>(nullptr)
+        : GetRef<Module>(this);
+
+    return PackedFunc([this, opt_mod, name, ctx, number, repeat, min_repeat_ms] (TVMArgs args, TVMRetValue* rv) mutable {
+      int num_flat_args = 7 + args.num_args;
+      TVMValue values[num_flat_args];
+      int type_codes[num_flat_args];
+      TVMArgsSetter setter(values, type_codes);
+      int offs = 0;
+      setter(offs, this);
+      offs++;
+      setter(offs, opt_mod);
+      offs++;
+      setter(offs, name);
+      offs++;
+      setter(offs, ctx);
+      offs++;
+      setter(offs, number);
+      offs++;
+      setter(offs, repeat);
+      offs++;
+      setter(offs, min_repeat_ms);
+      offs++;
+
+      for (int i = 0; i < args.num_args; i++) {
+        setter(offs + i, args[i]);
+      }
+      remote_get_time_evaluator_.CallPacked(TVMArgs(values, type_codes, num_flat_args), rv);
+    });
   }
 
   Module LoadModule(std::string name) {
@@ -221,7 +238,7 @@ class RPCModuleNode final : public ModuleNode {
   void InitRemoteFunc(FType* func, const std::string& name) {
     if (*func != nullptr) return;
     RPCSession::PackedFuncHandle handle = sess_->GetFunction(name);
-    CHECK(handle != nullptr) << "Cannot found remote function " << name;
+    CHECK(handle != nullptr) << "Could not find remote function " << name;
     *func = WrapRemoteFunc(handle);
   }
 
@@ -236,8 +253,8 @@ class RPCModuleNode final : public ModuleNode {
   // The local channel
   std::shared_ptr<RPCSession> sess_;
   // remote function to get time evaluator
-  TypedPackedFunc<PackedFunc(Optional<Module>, std::string, int, int, int, int, int)>
-      remote_get_time_evaluator_;
+  //   needs to be dynamically typed, because it's variadic
+  PackedFunc remote_get_time_evaluator_;
   // remote function getter for modules.
   TypedPackedFunc<PackedFunc(Module, std::string, bool)> remote_mod_get_function_;
   // remote function getter for load module
@@ -281,6 +298,14 @@ void RPCWrappedFunc::WrapRemoteReturnToValue(TVMArgs args, TVMRetValue* rv) cons
     DLTensor* tensor = args[1];
     void* nd_handle = args[2];
     *rv = WrapRemoteNDArray(tensor, nd_handle);
+  } else if (tcode == kTVMBytes) {
+    // TODO stop handling bytes as strings internally?
+    CHECK_EQ(args.size(), 2);
+    const std::string& byte_arr = args[1];
+    *rv = TVMByteArray {
+      .data = byte_arr.data(),
+      .size = byte_arr.size() - 1  // strip off null terminator
+    };
   } else {
     CHECK_EQ(args.size(), 2);
     *rv = args[1];
@@ -304,12 +329,6 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, TVMContext ctx, int number, int repe
                              int min_repeat_ms) {
   CHECK(pf != nullptr);
 
-  if (static_cast<int>(ctx.device_type) == static_cast<int>(kDLMicroDev)) {
-    auto get_micro_time_evaluator = runtime::Registry::Get("micro._GetMicroTimeEvaluator");
-    CHECK(get_micro_time_evaluator != nullptr) << "micro backend not enabled";
-    return (*get_micro_time_evaluator)(pf, ctx, number, repeat);
-  }
-
   auto ftimer = [pf, ctx, number, repeat, min_repeat_ms](TVMArgs args, TVMRetValue* rv) mutable {
     TVMRetValue temp;
     std::ostringstream os;
@@ -323,6 +342,7 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, TVMContext ctx, int number, int repe
           tend;
       double duration_ms = 0.0;
 
+      // do-while structure ensures we run even when `min_repeat_ms` isn't set (i.e., is 0).
       do {
         if (duration_ms > 0.0) {
           number = static_cast<int>(std::max((min_repeat_ms / (duration_ms / number) + 1),
@@ -345,7 +365,6 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, TVMContext ctx, int number, int repe
           std::chrono::duration_cast<std::chrono::duration<double>>(tend - tbegin).count() / number;
       os.write(reinterpret_cast<char*>(&speed), sizeof(speed));
     }
-
     std::string blob = os.str();
     TVMByteArray arr;
     arr.size = blob.length();
@@ -357,25 +376,37 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, TVMContext ctx, int number, int repe
 }
 
 TVM_REGISTER_GLOBAL("runtime.RPCTimeEvaluator")
-    .set_body_typed([](Optional<Module> opt_mod, std::string name, int device_type, int device_id,
-                       int number, int repeat, int min_repeat_ms) {
+    .set_body([](TVMArgs args, TVMRetValue* rv) {
+      Optional<Module> opt_mod = args[0];
+      std::string name = args[1];
+      int device_type = args[2];
+      int device_id = args[3];
+      int number = args[4];
+      int repeat = args[5];
+      int min_repeat_ms = args[6];
+
       TVMContext ctx;
       ctx.device_type = static_cast<DLDeviceType>(device_type);
       ctx.device_id = device_id;
+
+      PackedFunc timer_func;
       if (opt_mod.defined()) {
         Module m = opt_mod.value();
         std::string tkey = m->type_key();
         if (tkey == "rpc") {
-          return static_cast<RPCModuleNode*>(m.operator->())
+          timer_func = static_cast<RPCModuleNode*>(m.operator->())
               ->GetTimeEvaluator(name, ctx, number, repeat, min_repeat_ms);
         } else {
-          return WrapTimeEvaluator(m.GetFunction(name, false), ctx, number, repeat, min_repeat_ms);
+          timer_func = WrapTimeEvaluator(m.GetFunction(name, false), ctx, number, repeat, min_repeat_ms);
         }
       } else {
         auto* pf = runtime::Registry::Get(name);
         CHECK(pf != nullptr) << "Cannot find " << name << " in the global function";
-        return WrapTimeEvaluator(*pf, ctx, number, repeat, min_repeat_ms);
+        timer_func = WrapTimeEvaluator(*pf, ctx, number, repeat, min_repeat_ms);
       }
+      timer_func.CallPacked(
+        TVMArgs(&(args.values[7]), &(args.type_codes[7]), args.num_args - 7),
+        rv);
     });
 
 // server function registration.
