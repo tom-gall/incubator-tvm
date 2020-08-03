@@ -47,10 +47,13 @@ def _generate_mod_wrapper(src_path):
       '#include <tvm/runtime/crt/module.h>',
       '#include <stdio.h>',
       '',
+      '#ifdef __cplusplus',
+      'extern "C" {',
+      '#endif',
       'static TVMBackendPackedCFunc funcs[] = {',
   ]
   for f in funcs:
-    lines.append(f'    &{f},')
+    lines.append(f'    (TVMBackendPackedCFunc) &{f},')
   lines += [
       '};',
       'static const TVMFuncRegistry system_lib_registry = {',
@@ -65,6 +68,9 @@ def _generate_mod_wrapper(src_path):
 #      '    fprintf(stderr, "create system lib!! %p\\n", system_lib.registry->funcs[0]);',
       '    return &system_lib;',
       '}',
+      '#ifdef __cplusplus',
+      '}  // extern "C"',
+      '#endif',
       '',   # blank line to end the file
   ]
   with open(src_path, 'a') as wrapper_f:
