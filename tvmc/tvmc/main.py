@@ -36,9 +36,10 @@ import tvmc.runner
 from tvmc.common import TVMCException
 
 TARGET_ALIASES = {
-    "aarch64": "llvm -device=arm_cpu -mtriple=aarch64-linux-gnu -mattr=+neon"
+    "aarch64": "llvm -device=arm_cpu -mtriple=aarch64-linux-gnu -mattr=+neon",
+    "armv7-a": "llvm -device=arm_cpu -mtriple=armv7a-linux-gnueabihf -mattr=+neon,+vfp4,+thumb2"
 }
-VALID_TARGETS = {"aarch64", "llvm"}
+VALID_TARGETS = {"aarch64", "llvm", "armv7-a"}
 DEFAULT_TARGET = "llvm"
 
 
