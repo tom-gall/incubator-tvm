@@ -79,9 +79,15 @@ class LocalBuilder(Builder):
         If is 'default', use default build function
         If is 'ndk', use function for android ndk
         If is callable, use it as custom build function, expect lib_format field.
+    do_fork: bool, optional
+        If True, fork() before executing build jobs. If `build_func` is stateful, or if running on a
+        system that does not support fork after initialization (e.g. cuda runtime, cudnn), this may
+        not be desirable. If `build_func` does not appear to be retaining state between builds, set
+        to False.
     """
-    def __init__(self, timeout=10, n_parallel=None, build_func='default'):
-        super(LocalBuilder, self).__init__(timeout, n_parallel)
+    def __init__(self, timeout=10, n_parallel=None, build_kwargs=None, build_func='default',
+                 do_fork=True):
+        super(LocalBuilder, self).__init__(timeout, n_parallel, build_kwargs=build_kwargs)
 
         if isinstance(build_func, str):
             if build_func == 'default':
@@ -91,7 +97,7 @@ class LocalBuilder(Builder):
             else:
                 raise ValueError("Invalid build_func" + build_func)
         self.build_func = _wrap_build_func(build_func)
-        self.executor = LocalExecutor(timeout=timeout)
+        self.executor = LocalExecutor(timeout=timeout, do_fork=do_fork)
         self.tmp_dir = tempfile.mkdtemp()
 
     def build(self, measure_inputs):
