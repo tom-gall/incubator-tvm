@@ -8,7 +8,7 @@ class MicroBinary(artifact.Artifact):
 
   @classmethod
   def from_unarchived(cls, base_dir, labelled_files, metadata):
-    binary_file = labelled_files['binary_file']
+    binary_file = labelled_files['binary_file'][0]
     del labelled_files['binary_file']
 
     debug_files = None
@@ -16,7 +16,7 @@ class MicroBinary(artifact.Artifact):
       debug_files = labelled_files['debug_files']
       del labelled_files['debug_files']
 
-    return cls(base_dir, binary_file, debug_files=debug_files, labelled_fiels=labelled_files,
+    return cls(base_dir, binary_file, debug_files=debug_files, labelled_files=labelled_files,
                metadata=metadata)
 
   def __init__(self, base_dir, binary_file, debug_files=None, labelled_files=None, metadata=None):
