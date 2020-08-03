@@ -1,11 +1,13 @@
- import contextlib
+import contextlib
 import copy
 import glob
 import os
+import textwrap
 
 import numpy
 
 import tvm
+import tvm.relay
 import tvm.micro
 
 from tvm.contrib import device_util
@@ -60,47 +62,50 @@ def test_compile_runtime():
       assert (C_data.asnumpy() == numpy.array([6, 7])).all()
 
 
-def test_autotvm(sess):
-  model = tvm.relay.from_text(textutil.dedent("""\
+def test_autotvm():
+  target = tvm.target.create('c -mcpu=x86-64')
+  model = tvm.relay.fromtext("""\
       v0.0.4
-      def @main(data: Tensor[(1, 32, 32, 3), "int8"], weight: Tensor[(5, 5, 3, 3),
-      nn.conv2d(
-      %data,
-      %weight,
-      padding=[2, 2],
-      channels=3,
-      kernel_size=[5, 5],
-      data_layout="NHWC",
-      kernel_layout="HWOI",
-      out_dtype="int32")"")
-  """))
+      def @main(%data: Tensor[(1, 3, 32, 32), int8], %weight: Tensor[(3, 3, 5, 5), int8]) {
+          nn.conv2d(
+               %data,
+               %weight,
+               padding=[2, 2],
+               channels=3,
+               kernel_size=[5, 5],
+               data_layout="NCHW",
+               kernel_layout="OIHW",
+               out_dtype="int32")
 
+      }
+      """)
   with tvm.transform.PassContext(opt_level=3, config={'tir.disable_vectorize': True}):
-    tasks = tvm.autotvm.task.extract_from_program(
-      compiled_model.ir_mod[compiled_model.entry_point],
-      compiled_model.params,
-      self.target)
+    tasks = tvm.autotvm.task.extract_from_program(model, {}, target)
 
   assert len(tasks) == 1
-  tuner = tvm.autotvm.tuner.GATuner(task)
+  tuner = tvm.autotvm.tuner.GATuner(tasks[0])
+
+  workspace = tvm.micro.Workspace(debug=True)
+  compiler = tvm.micro.DefaultCompiler(target=target)
+  lib_opts = tvm.micro.DefaultOptions()
+  lib_opts['include_dirs'].append(os.path.join(tvm.micro.TVM_ROOT_DIR, 'src', 'runtime', 'crt', 'host'))
+  lib_opts['include_dirs'].append(os.path.join(tvm.micro.TVM_ROOT_DIR, 'src', 'runtime', 'crt', 'include'))
+
+  adapter = tvm.micro.AutoTvmAdapter(workspace, compiler, compiler.flasher_factory,
+                                     lib_opts=lib_opts)
 
   builder = tvm.autotvm.LocalBuilder(
-      build_func=tvm.micro.cross_compiler(
-          dev_config,
-          tvm.micro.LibType.OPERATOR,
-          lib_headers=HEADERS,
-          lib_include_paths=INCLUDE_PATHS),
-      n_parallel=num_runners)
-  builder.build_kwargs.setdefault('build_option', {})['disable_vectorize'] = True
-  runner = tvm.autotvm.RPCRunner(
-      tracker_key, tracker_host, tracker_port, n_parallel=num_runners,
-      number=1, repeat=1, timeout=0)
+      build_func=adapter.StaticRuntime,
+      n_parallel=1,
+      build_kwargs={'build_option': {'tir.disable_vectorize': True}},
+      do_fork=False)
+  runner = tvm.autotvm.LocalRunner(
+      number=1, repeat=1, timeout=0, code_loader=adapter.CodeLoader)
 
   measure_option = tvm.autotvm.measure_option(builder=builder, runner=runner)
-  n_trial = min(args.num_iterations, len(task.config_space))
-  tuner.tune(n_trial=2,
+  tuner.tune(n_trial=5,
              measure_option=measure_option,
-             callbacks=[]
+             callbacks=[],
              si_prefix='k')
 
 
@@ -108,3 +113,6 @@ def test_autotvm(sess):
 
 if __name__ == '__main__':
   test_compile_runtime()
+  import logging
+  logging.basicConfig(level=logging.DEBUG)
+  test_autotvm()

@@ -1,9 +1,11 @@
+import contextlib
 import copy
 import glob
 import logging
 import os
 import re
 from tvm.contrib import util
+from .. import rpc as _rpc
 
 
 _LOG = logging.getLogger(__name__)
@@ -169,10 +171,10 @@ def build_static_runtime(workspace, compiler, module, lib_opts=None, bin_opts=No
 
 class AutoTvmAdapter:
 
-  def __init__(self, workspace, compiler, flasher, lib_opts=None, bin_opts=None):
+  def __init__(self, workspace, compiler, flasher_factory, lib_opts=None, bin_opts=None):
     self.workspace = workspace
     self.compiler = compiler
-    self.flasher = flasher
+    self.flasher_factory = flasher_factory
     self.lib_opts = lib_opts if lib_opts is not None else _CRT_DEFAULT_OPTIONS
     self.bin_opts = bin_opts if bin_opts is not None else _CRT_DEFAULT_OPTIONS
 
@@ -181,7 +183,7 @@ class AutoTvmAdapter:
 
     for lib_src_dir in RUNTIME_LIB_SRC_DIRS:
       lib_name = os.path.basename(lib_src_dir)
-      lib_build_dir = self.workspace.relpath(f'build/{lib_name}')
+      lib_build_dir = self.workspace.relpath(f'autotvm/build/{lib_name}')
       os.makedirs(lib_build_dir)
 
       lib_srcs = []
@@ -191,28 +193,47 @@ class AutoTvmAdapter:
 
       self.libs.append(self.compiler.Library(lib_build_dir, lib_srcs, lib_opts))
 
-  def CodeLoader(self, remote, build_result):
-    remote.upload(build_result.filename)
-    remote_filename = os.path.basename(build_result.filename)
-    create_micro_session = remote.get_function('tvm.micro.create_micro_session')
-    create_micro_session(build_result.filename,)
+  @contextlib.contextmanager
+  def CodeLoader(self, remote_kw, build_result):
+    try:
+      tracker = _rpc.connect_tracker(remote_kw['host'], remote_kw['port'])
+
+      with open(build_result.filename, 'rb') as build_f:
+        build_result_bin = build_f.read()
+
+        remote = tracker.request(remote_kw['device_key'], priority=remote_kw['priority'],
+                                 session_timeout=remote_kw['timeout'],
+                                 session_constructor_args=['tvm.micro.create_micro_session',
+                                                           os.path.basename(build_result.filename),
+                                                           build_result_bin,
+                                                           self.flasher_factory.to_json])
+
+        yield remote, remote.get_function('runtime.SystemLib')()
+    except Exception as e:
+      import traceback
+      traceback.print_exc()
+      raise
 
   def StaticRuntime(self, target, sources, options=None):
-    _generate_mod_wrapper(mod_src_path)
+    _generate_mod_wrapper(sources[0])
 
-    mod_build_dir = workspace.relpath(os.path.join('build', 'module'))
-    os.makedirs(mod_build_dir)
+    mod_build_dir = self.workspace.relpath(os.path.join('autotvm', 'build', f'module-{self.module_number}'))
+    if not os.path.exists(mod_build_dir):
+      os.makedirs(mod_build_dir)
 
     lib_opts = self.lib_opts
     if options is not None:
       lib_opts = dict(lib_opts)
-      lib_opts.setdefault('cflags').extend(options)
+      lib_opts.setdefault('cflags', []).extend(options)
 
-    libs.append(compiler.Library(mod_build_dir, sources, lib_opts))
-    runtime_build_dir = workspace.relpath(f'build/runtime-{self.module_number}')
+    libs = list(self.libs)
+    libs.append(self.compiler.Library(mod_build_dir, sources, lib_opts))
+    runtime_build_dir = self.workspace.relpath(f'autotvm/build/runtime-{self.module_number}')
+    self.module_number += 1
     os.makedirs(runtime_build_dir)
 
-    binary = self.compiler.Binary(runtime_build_dir, self.libs, self.bin_opts)
+    binary = self.compiler.Binary(runtime_build_dir, libs, self.bin_opts)
     binary.archive(target)
 
-  def Run(self,):
+  StaticRuntime.output_format = 'tar'  # For tvm.autotvm.measure.measure_methods._wrap_build_func
+  StaticRuntime.object_format = 'cc'  # tvm.runtime.module.Module.export_library

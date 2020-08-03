@@ -253,14 +253,18 @@ class RPCRunner(Runner):
 
             if 'cuda' in self.task.target.keys:
                 kwargs["cuda_arch"] = "sm_" + "".join(ctx.compute_version.split('.'))
-        if self.task.target.device_name == 'micro_dev':
-            kwargs.setdefault('build_option', {})['tir.disable_vectorize'] = True
 
         return kwargs
 
     def run(self, measure_inputs, build_results):
         results = []
-        remote_args = (self.key, self.host, self.port, self.priority, self.timeout)
+        remote_kw = dict(
+            device_key=self.key,
+            host=self.host,
+            port=self.port,
+            priority=self.priority,
+            timeout=self.timeout,
+        )
 
         for i in range(0, len(measure_inputs), self.n_parallel):
             futures = []
@@ -273,7 +277,7 @@ class RPCRunner(Runner):
                                            self.repeat,
                                            self.min_repeat_ms,
                                            self.cooldown_interval,
-                                           remote_args,
+                                           remote_kw,
                                            self.ref_input,
                                            self.ref_output,
                                            self.code_loader)
@@ -327,13 +331,14 @@ class LocalRunner(RPCRunner):
     def __init__(self,
                  timeout=10,
                  number=4, repeat=3, min_repeat_ms=0, cooldown_interval=0.1,
-                 check_correctness=False):
+                 check_correctness=False, code_loader=None):
         super(LocalRunner, self).__init__('', None, None, 0,
                                           timeout=timeout, n_parallel=1,
                                           number=number, repeat=repeat,
                                           min_repeat_ms=min_repeat_ms,
                                           cooldown_interval=cooldown_interval,
-                                          check_correctness=check_correctness)
+                                          check_correctness=check_correctness,
+                                          code_loader=code_loader)
         self.tracker = None
         self.server = None
 
@@ -368,6 +373,7 @@ def _build_func_common(measure_input, check_gpu=None, cuda_arch=None, build_opti
             raise InstantiationError(config.errors)
 
         opts = build_option or {}
+        print('build opt', opts)
         if check_gpu:  # Add verify pass to filter out invalid configs in advance.
             opts["tir.add_lower_pass"] = [(2, gpu_verify_pass(**check_gpu))]
         if cuda_arch:
@@ -423,13 +429,16 @@ def _wrap_build_func(build_func):
             func, arg_info = _build_func_common(measure_input, **kwargs)
             func.export_library(filename, build_func)
         except Exception as e:  # pylint: disable=broad-except
+            logging.debug('builder raised exception', exc_info=True)
             return BuildResult(None, None, e, time.time() - tic)
         return BuildResult(filename, arg_info, None, time.time() - tic)
     return _wrapped
 
 
 @contextlib.contextmanager
-def default_code_loader(remote, build_result):
+def default_code_loader(remote_kw, build_result):
+    remote = request_remote(**remote_kw)
+
     # Program the FPGA every single time when targeting VTA
     if hasattr(measure_input.target, 'device_name') and \
        measure_input.target.device_name == 'vta':
@@ -451,7 +460,7 @@ def default_code_loader(remote, build_result):
 
 def run_through_rpc(measure_input, build_result,
                     number, repeat, min_repeat_ms, cooldown_interval,
-                    remote_args, ref_input=None, ref_output=None,
+                    remote_kw, ref_input=None, ref_output=None,
                     code_loader=None):
     """Run a generated library through rpc
 
@@ -479,8 +488,8 @@ def run_through_rpc(measure_input, build_result,
         will be automatically increased.
     cooldown_interval: float
         The cool down interval between two measurements
-    remote_args: Tuple
-        The argument for request_remote
+    remote_kw: Dict
+        Keyword args for request_remote, passed to `code_loader`.
     ref_input: List of np.ndarray
         The reference input used for checking correctness
     ref_output: List of np.ndarray
@@ -493,11 +502,11 @@ def run_through_rpc(measure_input, build_result,
     errno = MeasureErrorNo.NO_ERROR
     try:
         # upload built module
-        remote = request_remote(*remote_args)
-        with code_loader(remote, build_result) as remote, mod:
+        print('code loader', code_loader)
+        with code_loader(remote_kw, build_result) as (remote, mod):
             ctx = remote.context(str(measure_input.target), 0)
             time_f = mod.time_evaluator(
-                func.entry_name, ctx, number=number, repeat=repeat, min_repeat_ms=min_repeat_ms)
+                'default_function', ctx, number=number, repeat=repeat, min_repeat_ms=min_repeat_ms)
 
             # set input
             if ref_input:

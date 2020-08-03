@@ -1,8 +1,13 @@
+import os
+import tempfile
 import time
 
 from .base import _rpc_connect
 from ..rpc import RPCSession
 from .transport import TransportLogger
+from . import compiler
+from . import micro_binary
+from .. import register_func, register_object
 
 
 class Session:
@@ -89,26 +94,26 @@ def load_rpc_session_config(file_name):
 RPC_SESSION = None
 
 
-@register_func
-def create_micro_session(micro_binary_path, flasher_class, flasher_args, flasher_kw):
+@register_func("tvm.micro.create_micro_session")
+def create_micro_session(build_result_filename, build_result_bin, flasher_factory_json):
     global RPC_SESSION
     if RPC_SESSION is not None:
         raise Exception('Micro session already established')
 
-    if RPC_SESSION_CONFIG is None:
-        raise Exception('No RPC_SESSION_CONFIG loaded')
+    with tempfile.NamedTemporaryFile(prefix=build_result_filename, mode='w+b') as tf:
+        tf.write(build_result_bin)
+        tf.flush()
 
-    binary = micro_binary.MicroBinary.unarchive(
-        build_result.filename, tempfile.mkdtemp(dir=self.workspace.relpath('binary')))
-    flasher_package_name, flasher_class_name = RPC_SESSION_CONFIG['flasher_class']
-    flasher_package = importlib.import_module(flasher_package_name)
-    flasher_class = getattr(flasher_package, flasher_class_name)
-    assert issubclass(flasher_class, Flasher), (
-        f'flasher_class_path must specify a subclass of Flasher, got {flasher_class_path}')
+#    if RPC_SESSION_CONFIG is None:
+#        raise Exception('No RPC_SESSION_CONFIG loaded')
 
-    RPC_SESSION = session.Session(binary=binary, flasher=self.flasher)
-    RPC_SESSION.__enter__()
-    return RPC_SESSION
+        binary = micro_binary.MicroBinary.unarchive(
+            tf.name, os.path.join(tempfile.mkdtemp(), 'binary'))
+        flasher_obj = compiler.FlasherFactory.from_json(flasher_factory_json).instantiate()
+
+        RPC_SESSION = Session(binary=binary, flasher=flasher_obj)
+        RPC_SESSION.__enter__()
+        return RPC_SESSION._rpc._sess
 
 
 @register_func

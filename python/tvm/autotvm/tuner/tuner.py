@@ -139,6 +139,7 @@ class Tuner(object):
                 else:
                     flops = 0
                     error_ct += 1
+                    logger.debug('iteration %d: error during measurement:\n%s', i, res.costs[0])
 
                 if flops > self.best_flops:
                     self.best_flops = flops
