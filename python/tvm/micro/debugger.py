@@ -6,6 +6,7 @@ import subprocess
 import threading
 
 from .. import register_func, register_object
+from . import class_factory
 from . import transport
 
 
@@ -169,7 +170,11 @@ class GdbRemoteDebugger(GdbDebugger):
 GLOBAL_DEBUGGER = None
 
 
-@register_func("tvm.micro.debugger.LaunchDebugger")
+class DebuggerFactory(class_factory.ClassFactory):
+
+  SUPERCLASS = Debugger
+
+
 def LaunchDebuggger(debugger_class_path, *args, **kw):
   print('launch debugger')
   global GLOBAL_DEBUGGER
@@ -185,6 +190,11 @@ def LaunchDebuggger(debugger_class_path, *args, **kw):
   GLOBAL_DEBUGGER.Start()
 
 
+@register_func("tvm.micro.debugger.LaunchDebugger")
+def _LaunchDebugger(debugger_factory_json):
+  LaunchDebugger(DebuggerFactory.from_json(debugger_factory_json))
+
+
 @register_func("tvm.micro.debugger.StopDebugger")
 def StopDebugger():
   global GLOBAL_DEBUGGER
@@ -197,11 +207,9 @@ def StopDebugger():
 
 class RpcDebugger(Debugger):
 
-  def __init__(self, rpc_session, debugger_class_path, *args, wrapping_context_manager=None, **kw):
+  def __init__(self, rpc_session, factory, wrapping_context_manager=None):
     super(RpcDebugger, self).__init__()
-    self.debugger_class_path = debugger_class_path
-    self._args = args
-    self._kw = kw
+    self._factory = factory
     self.launch_debugger = rpc_session.get_function('tvm.micro.debugger.LaunchDebugger')
     self.stop_debugger = rpc_session.get_function('tvm.micro.debugger.StopDebugger')
     self.wrapping_context_manager = wrapping_context_manager
@@ -209,7 +217,7 @@ class RpcDebugger(Debugger):
   def Start(self):
     if self.wrapping_context_manager is not None:
       self.wrapping_context_manager.__enter__()
-    self.launch_debugger(self.debugger_class_path, *self._args, **self._kw)
+    self.launch_debugger(self._factory.to_json)
     input('Press [Enter] when debugger is set')
 
   def Stop(self):

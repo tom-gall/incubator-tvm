@@ -9,6 +9,7 @@ import sys
 
 import tvm.micro
 from . import base
+from .. import compiler
 from .. import debugger
 from .. import transport
 
@@ -16,11 +17,11 @@ from .. import transport
 class SubprocessEnv(object):
 
   def __init__(self, default_overrides):
-    self._default_overrides = default_overrides
+    self.default_overrides = default_overrides
 
   def Run(self, cmd, **kw):
     env = dict(os.environ)
-    for k, v in self._default_overrides.items():
+    for k, v in self.default_overrides.items():
       env[k] = v
 
 #    print('run with env', cmd)
@@ -164,10 +165,15 @@ class ZephyrCompiler(tvm.micro.Compiler):
                                  labelled_files={'cmake_cache': ['CMakeCache.txt'],
                                                  'device_tree': [os.path.join('zephyr', 'zephyr.dts')]})
 
-  def Flasher(self, **flasher_opts):
-    return ZephyrFlasher(self._west_cmd, zephyr_base=self._zephyr_base,
-                         project_dir=self._project_dir, subprocess_env=self._subprocess_env,
-                         **flasher_opts)
+  @property
+  def flasher_factory(self):
+    return compiler.FlasherFactory(
+      ZephyrFlasher,
+      (self._west_cmd,),
+      dict(
+        zephyr_base=self._zephyr_base,
+        project_dir=self._project_dir,
+        subprocess_env=self._subprocess_env.default_overrides))
 
 
 CACHE_ENTRY_RE = re.compile(r'(?P<name>[^:]+):(?P<type>[^=]+)=(?P<value>.*)')
@@ -200,7 +206,7 @@ class BoardError(Exception):
   pass
 
 
-class ZephyrFlasher(object):
+class ZephyrFlasher(tvm.micro.compiler.Flasher):
 
   def __init__(self, west_cmd, zephyr_base=None, project_dir=None, subprocess_env=None,
                nrfjprog_snr=None, openocd_serial=None, flash_args=None, debug_rpc_session=None):
@@ -217,7 +223,7 @@ class ZephyrFlasher(object):
     self._west_cmd = west_cmd
     self._flash_args = flash_args
     self._openocd_serial = openocd_serial
-    self._subprocess_env = subprocess_env
+    self._subprocess_env = SubprocessEnv(subprocess_env)
     self._debug_rpc_session = debug_rpc_session
     self._nrfjprog_snr = nrfjprog_snr
 
@@ -232,9 +238,11 @@ class ZephyrFlasher(object):
       if self._nrfjprog_snr is None:
         raise BoardError(
           f'Multiple boards connected; specify one with nrfjprog_snr=: {", ".join(boards)}')
-      elif self._nrfjprog_snr not in boards:
+      elif str(self._nrfjprog_snr) not in boards:
         raise BoardError(
-          f'nrfjprog_snr ({self._nrfjprog_snr}) not found in {nrfjprog_ids.args}: {boards}')
+          f'nrfjprog_snr ({self._nrfjprog_snr}) not found in {nrfjprog_args}: {boards}')
+
+      return ['--snr', str(self._nrfjprog_snr)]
 
     if not boards:
       return []

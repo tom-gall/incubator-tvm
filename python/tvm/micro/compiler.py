@@ -2,10 +2,12 @@ import abc
 import glob
 import os
 import re
+import typing
 
 from tvm.contrib import binutil
 import tvm.target
 from . import build
+from . import class_factory
 from . import debugger
 from . import transport
 
@@ -176,6 +178,15 @@ class Compiler(metaclass=abc.ABCMeta):
     """
     raise NotImplementedError()
 
+  @property
+  def flasher_factory(self):
+    """Produce a FlasherFactory that can produce a Flasher instance suitable to be returned from Flasher()."""
+    raise NotImplementedError("The Compiler base class doesn't define a flasher.")
+
+  def Flasher(self, **kw):
+    """Return a Flasher that can be used to program a produced MicroBinary onto the target."""
+    return self.flasher_factory.override_kw(**kw).instantiate()
+
 
 class IncompatibleTargetError(Exception):
   """Raised when source files specify a target that differs from the compiler target."""
@@ -188,6 +199,7 @@ class DefaultCompiler(Compiler):
     self.target = target
 
   def Library(self, output, sources, options=None):
+    options = options if options is not None else {}
     try:
       target = self._TargetFromSources(sources)
     except DetectTargetError:
@@ -209,8 +221,7 @@ class DefaultCompiler(Compiler):
       args = [prefix + compiler_name, '-g']
       args.extend(self._DefaultsFromTarget(target))
 
-      if options is not None:
-        args.extend(options.get(f'{src_ext[1:]}flags', []))
+      args.extend(options.get(f'{src_ext[1:]}flags', []))
 
       for d in options.get('include_dirs', []):
         args.extend(['-I', d])
@@ -259,8 +270,9 @@ class DefaultCompiler(Compiler):
     binutil.run_cmd(args)
     return tvm.micro.MicroBinary(output, output_filename, [])
 
-  def Flasher(self, **kw):
-    return HostFlasher(**kw)
+  @property
+  def flasher_factory(self, **kw):
+    return FlasherFactory(HostFlasher, [], kw)
 
 
 class Flasher(metaclass=abc.ABCMeta):
@@ -281,6 +293,11 @@ class Flasher(metaclass=abc.ABCMeta):
         this TVM instance and the newly-flashed binary.
     """
     raise NotImplementedError()
+
+
+class FlasherFactory(class_factory.ClassFactory):
+
+  SUPERCLASS = Flasher
 
 
 class HostFlasher(Flasher):
