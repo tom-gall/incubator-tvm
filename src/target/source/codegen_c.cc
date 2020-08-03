@@ -641,6 +641,22 @@ void CodeGenC::VisitExpr_(const CallNode* op, std::ostream& os) {  // NOLINT(*)
       os << " != ";
       this->PrintExpr(op->args[0], os);
       os << ")";
+    } else if (call_op->name == "tir.round") {
+      LOG(INFO) << "args";
+      for (auto r : op->args) {
+        LOG(INFO) << "arg " << r;
+      }
+      if (op->dtype.is_float()) {
+        if (op->dtype.bits() == 32) {
+          this->PrintCallExtern(GetType(GetRef<PrimExpr>(op)), "roundf", op->args, false, os);
+        } else if (op->dtype.bits() == 64) {
+          this->PrintCallExtern(GetType(GetRef<PrimExpr>(op)), "round", op->args, false, os);
+        } else {
+          LOG(FATAL) << "CodeGenC: Unable to emit " << op->dtype.bits() << "-bit round op";
+        }
+      } else {
+        LOG(FATAL) << "CodeGenC: Unable to emit non-float round op";
+      }
     } else {
       LOG(FATAL) << "Unresolved call " << op->op;
     }
