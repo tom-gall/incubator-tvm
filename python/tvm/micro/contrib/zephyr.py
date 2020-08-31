@@ -256,15 +256,17 @@ class ZephyrFlasher(tvm.micro.compiler.Flasher):
     return []
 
   def _get_device_args(self, cmake_entries):
-    flash_runner = cmake_entries['ZEPHYR_BOARD_FLASH_RUNNER']
+    flash_runner = cmake_entries.get('ZEPHYR_BOARD_FLASH_RUNNER')
+    #flash_runner = cmake_entries['ZEPHYR_BOARD_FLASH_RUNNER']
     if flash_runner == 'nrfjprog':
       return self._get_nrf_device_args()
     elif flash_runner == 'openocd':
       return self._get_openocd_device_args()
     else:
-      raise BoardError(
-        f"Don't know how to find serial terminal for board {cmake_entries['BOARD']} with flash "
-        f"runner {flash_runner}")
+      return self._get_openocd_device_args()
+      #raise BoardError(
+      # f"Don't know how to find serial terminal for board {cmake_entries['BOARD']} with flash "
+      # f"runner {flash_runner}")
 
 
   def Flash(self, micro_binary):
@@ -291,7 +293,9 @@ class ZephyrFlasher(tvm.micro.compiler.Flasher):
 
   def _find_serial_port(self, micro_binary):
     cmake_entries = read_cmake_cache(micro_binary.abspath(micro_binary.labelled_files['cmake_cache'][0]))
-    flash_runner = cmake_entries['ZEPHYR_BOARD_FLASH_RUNNER']
+ 
+    flash_runner = cmake_entries.get('ZEPHYR_BOARD_FLASH_RUNNER')
+    #flash_runner = cmake_entries['ZEPHYR_BOARD_FLASH_RUNNER']
     if flash_runner == 'nrfjprog':
       return self._find_nrf_serial_port(cmake_entries)
 
